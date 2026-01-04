@@ -6,7 +6,8 @@ import io
 import time
 
 # --- Configuration ---
-st.set_page_config(page_title="(주)부름 건설회계", page_icon="🏗️")
+# --- Configuration ---
+st.set_page_config(page_title="세무의 모든 것", page_icon="💰", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Constants & Mappings ---
 MAPPING_RULES = {
@@ -41,10 +42,15 @@ MAPPING_RULES = {
     ("사무용품", "본사"): ("소모품비", "판관비"),
     ("도서/인쇄", "본사"): ("도서인쇄비", "판관비"),
     ("수수료", "본사"): ("수수료비용", "판관비"),
+    # 기타 수입
+    ("기타수입", "현장"): ("잡이익", "영업외수익"),
+    ("기타수입", "본사"): ("잡이익", "영업외수익"),
 }
 
-# Extract unique items for the selectbox
-ITEMS = sorted(list(set([k[0] for k in MAPPING_RULES.keys()])))
+# Define Item Lists
+INCOME_ITEMS = ["공사대금수령", "기타수입"]
+ALL_ITEMS = sorted(list(set([k[0] for k in MAPPING_RULES.keys()])))
+EXPENSE_ITEMS = sorted([item for item in ALL_ITEMS if item not in INCOME_ITEMS])
 
 # Fixed Orders for Reports
 CONSTRUCTION_COST_ORDER = [
@@ -75,7 +81,13 @@ supabase: Client = init_supabase()
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# --- Functions ---
+# --- Helper Functions ---
+def get_mapping(item, attribution):
+    if (item, attribution) in MAPPING_RULES:
+        return MAPPING_RULES[(item, attribution)]
+    else:
+        return item, "미분류"
+
 def login(username, password):
     try:
         response = supabase.table("users").select("*").eq("username", username).eq("password", password).execute()
@@ -108,8 +120,84 @@ def logout():
     st.session_state.logged_in = False
     st.rerun()
 
+def show_login_page():
+    # Custom CSS for Login Page
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] {display: none;}
+            
+            /* Title Style */
+            .main-title {
+                font-size: 50px;
+                font-weight: bold;
+                color: black;
+                text-align: center;
+                margin-bottom: 10px;
+                font-family: 'Malgun Gothic', sans-serif;
+            }
+            
+            /* Logo Style */
+            .logo-icon {
+                font-size: 80px;
+                text-align: center;
+                display: block;
+                margin-bottom: 0px;
+            }
+            
+            /* Custom Button Style */
+            div.stButton > button:first-child {
+                background-color: #FCE4D6 !important;
+                color: #C0504D !important;
+                border-radius: 15px !important;
+                border: 1px solid #E0E0E0 !important;
+                font-weight: bold !important;
+                font-size: 18px !important;
+                padding: 15px 20px !important;
+                width: 100% !important;
+                box-shadow: 0px 2px 5px rgba(0,0,0,0.1) !important;
+            }
+            div.stButton > button:hover {
+                background-color: #F2D7C6 !important;
+                color: #A0302D !important;
+                border: 1px solid #C0C0C0 !important;
+            }
+            
+            /* Input fields styling */
+            div[data-baseweb="input"] {
+                border-radius: 10px;
+                border: 1px solid #CCCCCC !important;
+                background-color: #FFFFFF !important;
+            }
+            input {
+                color: #000000 !important;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    
+    with col2:
+        st.markdown('<div class="logo-icon">🔺</div>', unsafe_allow_html=True)
+        st.markdown('<div class="main-title">세무의 모든 것</div>', unsafe_allow_html=True)
+        
+        st.write("") 
+        st.write("") 
+        
+        username = st.text_input("아이디", placeholder="아이디를 입력하세요", label_visibility="collapsed")
+        st.write("") 
+        password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요", label_visibility="collapsed")
+        
+        st.write("") 
+        st.write("") 
+        
+        if st.button("로그인"):
+            login(username, password)
+
 def show_history_page():
-    st.header("내역 수정/삭제")
+    st.markdown("### 📋 내역 수정/삭제")
     try:
         response = supabase.table("transactions").select("*").order("date", desc=True).execute()
         rows = response.data
@@ -169,7 +257,7 @@ def show_history_page():
         st.write(e)
 
 def show_report_page():
-    st.header("보고서 요약")
+    st.markdown("### 📊 보고서 요약")
     
     try:
         response = supabase.table("transactions").select("*").execute()
@@ -224,21 +312,17 @@ def show_report_page():
         # --- Section 2: Construction Cost Statement (공사원가명세서) ---
         st.subheader("2. 공사원가명세서 (현장)")
         
-        # Calculate sums by category
         if not site_expense_df.empty:
             site_grouped = site_expense_df.groupby('category_std')['amount'].sum()
         else:
             site_grouped = pd.Series(dtype=int)
 
-        # Enforce Fixed Order
         cost_data = []
         for category in CONSTRUCTION_COST_ORDER:
             amount = site_grouped.get(category, 0)
             cost_data.append({"항목": category, "금액": amount})
         
         cost_statement_df = pd.DataFrame(cost_data)
-        
-        # Add Total Row
         total_row = pd.DataFrame({'항목': ['당기총공사비용(합계)'], '금액': [total_site_expense]})
         cost_statement_final = pd.concat([cost_statement_df, total_row], ignore_index=True)
         
@@ -254,7 +338,6 @@ def show_report_page():
         # --- Section 3: Income Statement (손익계산서) ---
         st.subheader("3. 손익계산서")
         
-        # 3-1. Summary
         gross_profit = total_revenue - total_site_expense
         operating_profit = gross_profit - total_hq_expense
         
@@ -272,9 +355,7 @@ def show_report_page():
             hide_index=True
         )
 
-        # 3-2. SG&A Details (판관비 상세)
         st.markdown("##### 판매비와관리비 상세")
-        
         if not hq_expense_df.empty:
             hq_grouped = hq_expense_df.groupby('category_std')['amount'].sum()
         else:
@@ -299,18 +380,11 @@ def show_report_page():
         
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            # Sheet 1: 공사원가명세서
             cost_statement_final.to_excel(writer, sheet_name='공사원가명세서', index=False)
-            
-            # Sheet 2: 손익계산서 (Summary + Details)
-            # Write Summary first
             is_summary_df.to_excel(writer, sheet_name='손익계산서', index=False, startrow=0)
-            # Write Details below
             start_row = len(is_summary_df) + 3
             pd.DataFrame(["[판매비와관리비 상세]"]).to_excel(writer, sheet_name='손익계산서', index=False, header=False, startrow=start_row-1)
             sga_df.to_excel(writer, sheet_name='손익계산서', index=False, startrow=start_row)
-            
-            # Sheet 3: Raw Data
             df.to_excel(writer, sheet_name='전체데이터', index=False)
             
         st.download_button(
@@ -325,110 +399,116 @@ def show_report_page():
         st.error("보고서를 생성하는 중 오류가 발생했습니다.")
         st.write(e)
 
-# --- UI Layout ---
-if not st.session_state.logged_in:
-    st.markdown("""<style>[data-testid="stSidebar"] {display: none;}</style>""", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("🏗️ 건설회계 시스템")
-        st.subheader("로그인")
-        username = st.text_input("아이디")
-        password = st.text_input("비밀번호", type="password")
-        if st.button("로그인", use_container_width=True):
-            login(username, password)
-else:
-    st.sidebar.title("(주)부름 건설회계")
-    st.sidebar.markdown("---")
-    menu = st.sidebar.radio("메뉴", ["수입/지출 입력", "내역 수정/삭제", "보고서 요약"])
-    st.sidebar.markdown("---")
-    if st.sidebar.button("로그아웃"):
-        logout()
+# --- Main Execution ---
+def main():
+    if not st.session_state.logged_in:
+        show_login_page()
+    else:
+        # Header Area
+        col_header_left, col_header_right = st.columns([8, 2])
+        
+        with col_header_left:
+            # Small Logo or Empty
+            st.markdown("### 🏗️") 
 
-    st.title("환영합니다! (주)부름 건설회계 시스템")
-    st.caption("Supabase 연동됨")
-    st.divider()
+        with col_header_right:
+            # User Profile and Logout
+            st.markdown("<div style='text-align: right; margin-bottom: 5px;'><b>👤 (주)부름 님</b></div>", unsafe_allow_html=True)
+            if st.button("로그아웃", use_container_width=True):
+                logout()
 
-    if menu == "수입/지출 입력":
-        st.header("수입/지출 입력")
-        col1, col2 = st.columns(2)
-        with col1:
-            date = st.date_input("날짜")
-        with col2:
-            tx_type = st.radio("구분", ["지출", "수입"], horizontal=True)
+        st.divider()
+        
+        # Tabs
+        tab1, tab2, tab3 = st.tabs(["📥 수입/지출 입력", "📋 내역 수정/삭제", "📊 보고서 요약"])
 
-        attribution = None
-        if tx_type == "지출":
-            attribution = st.radio("비용 귀속", ["현장", "본사"], horizontal=True)
-        else:
-            attribution = "본사"
-
-        with st.form("transaction_form"):
-            item = st.selectbox("항목 (일상 용어)", ITEMS)
-            amount = st.number_input("금액", min_value=0, step=1000)
-            vendor = st.text_input("거래처")
-            memo = st.text_input("적요/메모")
+        # --- Tab 1: Input ---
+        with tab1:
+            col_income, col_expense = st.columns(2)
             
-            submitted = st.form_submit_button("저장", use_container_width=True)
-            
-            if submitted:
-                category_std = item
-                account_type = "기타"
+            # --- Income Column ---
+            with col_income:
+                st.markdown("<h2 style='text-align: center;'>⬇️💰</h2>", unsafe_allow_html=True)
+                st.markdown("<h3 style='text-align: center;'>입금 (수입)</h3>", unsafe_allow_html=True)
                 
-                if tx_type == "지출":
-                    if (item, attribution) in MAPPING_RULES:
-                        category_std, account_type = MAPPING_RULES[(item, attribution)]
-                    else:
-                        category_std = item
-                        account_type = "미분류"
-                else:
-                    # Income mapping
-                    if (item, attribution) in MAPPING_RULES:
-                        category_std, account_type = MAPPING_RULES[(item, attribution)]
-                    else:
-                        category_std = "매출액"
-                        account_type = "매출"
+                with st.form("income_form"):
+                    date_in = st.date_input("날짜", key="in_date")
+                    site_in = st.text_input("현장명 (필수)", placeholder="어디서 들어온 돈인가요?")
+                    item_in = st.selectbox("항목", INCOME_ITEMS)
+                    amount_in = st.number_input("금액 (필수)", min_value=0, value=None, placeholder="입금액을 입력하세요 (숫자만)")
+                    memo_in = st.text_input("메모", placeholder="비고 사항")
+                    
+                    submit_in = st.form_submit_button("입금 내역 저장", use_container_width=True)
+                    
+                    if submit_in:
+                        if not site_in or amount_in is None:
+                            st.error("현장명과 금액을 입력해주세요.")
+                        else:
+                            # Income Mapping Logic
+                            cat_std, acc_type = get_mapping(item_in, "현장")
+                            
+                            try:
+                                data = {
+                                    "date": str(date_in),
+                                    "type": "수입",
+                                    "attribution": "현장", 
+                                    "category_raw": item_in, 
+                                    "category_std": cat_std,
+                                    "account_type": acc_type,
+                                    "amount": amount_in,
+                                    "vendor": site_in,
+                                    "memo": memo_in
+                                }
+                                supabase.table("transactions").insert(data).execute()
+                                st.success("✅ 입금 내역이 저장되었습니다.")
+                                st.info(f"분류: {cat_std} ({acc_type})")
+                            except Exception as e:
+                                st.error(f"저장 실패: {e}")
 
-                try:
-                    data = {
-                        "date": str(date),
-                        "type": tx_type,
-                        "attribution": attribution,
-                        "category_raw": item,
-                        "category_std": category_std,
-                        "account_type": account_type,
-                        "amount": amount,
-                        "vendor": vendor,
-                        "memo": memo
-                    }
-                    supabase.table("transactions").insert(data).execute()
-                    st.success(f"✅ 저장되었습니다!")
-                    st.info(f"매핑 결과: [{item}] -> [{category_std} ({account_type})]")
-                except Exception as e:
-                    st.error("저장 중 오류가 발생했습니다.")
-                    st.warning("Supabase에 'transactions' 테이블이 없는 것 같습니다. 아래 SQL을 실행해주세요.")
-                    sql_query = """
--- Transactions 테이블 생성
-CREATE TABLE public.transactions (
-    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    date DATE NOT NULL,
-    type TEXT NOT NULL,
-    attribution TEXT,
-    category_raw TEXT,
-    category_std TEXT,
-    account_type TEXT,
-    amount BIGINT,
-    vendor TEXT,
-    memo TEXT,
-    user_id TEXT
-);
-                    """
-                    st.code(sql_query, language="sql")
-                    with st.expander("상세 에러 내용"):
-                        st.write(e)
-        
-    elif menu == "내역 수정/삭제":
-        show_history_page()
-        
-    elif menu == "보고서 요약":
-        show_report_page()
+            # --- Expense Column ---
+            with col_expense:
+                st.markdown("<h2 style='text-align: center;'>⬆️💸</h2>", unsafe_allow_html=True)
+                st.markdown("<h3 style='text-align: center;'>출금 (지출)</h3>", unsafe_allow_html=True)
+                
+                with st.form("expense_form"):
+                    date_out = st.date_input("날짜", key="out_date")
+                    attribution_out = st.radio("귀속", ["현장", "본사"], horizontal=True)
+                    item_out = st.selectbox("항목", EXPENSE_ITEMS)
+                    amount_out = st.number_input("금액 (필수)", min_value=0, value=None, placeholder="지출액을 입력하세요 (숫자만)")
+                    memo_out = st.text_input("메모", placeholder="거래처명, 상세 내용 등")
+                    
+                    submit_out = st.form_submit_button("지출 내역 저장", use_container_width=True)
+                    
+                    if submit_out:
+                        if amount_out is None:
+                            st.error("금액을 입력해주세요.")
+                        else:
+                            cat_std, acc_type = get_mapping(item_out, attribution_out)
+                            try:
+                                data = {
+                                    "date": str(date_out),
+                                    "type": "지출",
+                                    "attribution": attribution_out,
+                                    "category_raw": item_out,
+                                    "category_std": cat_std,
+                                    "account_type": acc_type,
+                                    "amount": amount_out,
+                                    "vendor": "", 
+                                    "memo": memo_out
+                                }
+                                supabase.table("transactions").insert(data).execute()
+                                st.success("✅ 지출 내역이 저장되었습니다.")
+                                st.info(f"분류: {cat_std} ({acc_type})")
+                            except Exception as e:
+                                st.error(f"저장 실패: {e}")
+
+        # --- Tab 2: History ---
+        with tab2:
+            show_history_page()
+
+        # --- Tab 3: Report ---
+        with tab3:
+            show_report_page()
+
+if __name__ == "__main__":
+    main()
